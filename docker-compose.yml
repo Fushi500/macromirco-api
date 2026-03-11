@@ -69,6 +69,7 @@ services:
       NODE_ENV: production
     volumes:
       - ./static:/app/static:ro
+      - ./static/uploads:/app/static/uploads:rw
     ports:
       # Exposed to localhost so Cloudflare Tunnel can reach it.
       # The tunnel config points to http://localhost:3000.
