@@ -1,0 +1,16 @@
+# Environment secrets
+.env
+*.env
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Static served files (exercise images + user uploads — too large for git)
+static/
+
+# Compiled Flutter web build
+web/
+
+# Build artifacts
+*.lock
