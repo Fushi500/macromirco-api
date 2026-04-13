@@ -37,6 +37,8 @@ async function workoutRoutes(fastify) {
           reps: { type: 'integer', minimum: 0 },
           duration_minutes: { type: 'number', minimum: 0 },
           notes: { type: 'string', maxLength: 1000 },
+          estimated_calories: { type: 'number', minimum: 0, nullable: true },
+          intensity_level: { type: 'integer', minimum: 1, maximum: 10, nullable: true },
         },
       },
     },
@@ -45,13 +47,15 @@ async function workoutRoutes(fastify) {
     const result = await query(
       `INSERT INTO workout_logs (
         user_id, date, exercise_slug, exercise_name, category,
-        primary_muscles, sets, reps, duration_minutes, notes
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        primary_muscles, sets, reps, duration_minutes, notes,
+        estimated_calories, intensity_level
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *`,
       [
         request.userId, w.date, w.exercise_slug, w.exercise_name,
         w.category, w.primary_muscles || [], w.sets || 0, w.reps || 0,
         w.duration_minutes || 0, w.notes || '',
+        w.estimated_calories ?? null, w.intensity_level ?? null,
       ]
     );
     reply.code(201);
