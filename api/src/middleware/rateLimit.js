@@ -2,7 +2,7 @@ const { redis } = require('../redis');
 
 async function setupRateLimit(fastify) {
   await fastify.register(require('@fastify/rate-limit'), {
-    max: 100,
+    max: 300,
     timeWindow: '1 minute',
     redis: redis,
     keyGenerator: (req) => {

@@ -1,0 +1,1 @@
+ALTER TABLE daily_foods ADD COLUMN IF NOT EXISTS entry_type VARCHAR(10) NOT NULL DEFAULT 'food';

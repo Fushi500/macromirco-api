@@ -78,23 +78,33 @@ async function foodRoutes(fastify) {
           q: { type: 'string', minLength: 1, maxLength: 200 },
           page: { type: 'integer', minimum: 1, default: 1 },
           limit: { type: 'integer', minimum: 1, maximum: 50, default: 10 },
+          source: { type: 'string', enum: ['openfoodfacts', 'usda', 'all'], default: 'all' },
         },
         required: ['q'],
       },
     },
   }, async (request, reply) => {
-    const { q, page, limit } = request.query;
+    const { q, page, limit, source } = request.query;
 
-    const cacheKey = `food:search:${q.toLowerCase()}:${page}:${limit}`;
+    const cacheKey = `food:search:${q.toLowerCase()}:${page}:${limit}:${source}`;
     const cached = await redis.get(cacheKey);
     if (cached) {
       return JSON.parse(cached);
+    }
+
+    // Build source filter
+    let filter;
+    if (source === 'usda') {
+      filter = 'source = usda_foundation OR source = usda_sr_legacy';
+    } else if (source === 'openfoodfacts') {
+      filter = 'source NOT EXISTS OR source = openfoodfacts';
     }
 
     const offset = (page - 1) * limit;
     const results = await foodsIndex.search(q, {
       limit,
       offset,
+      filter,
       attributesToRetrieve: [
         'id', 'barcode', 'product_name', 'brands', 'quantity',
         'calories', 'protein', 'fat', 'carbs',
@@ -102,7 +112,20 @@ async function foodRoutes(fastify) {
         'cholesterol', 'potassium', 'calcium', 'iron',
         'vitamin_a', 'vitamin_c', 'serving_size',
         'image_url', 'ingredients_text', 'allergen_tags',
+        'source', 'food_category', 'portions',
       ],
+    });
+
+    // Add source_id to each hit: barcode for OFF, id for USDA, id for custom
+    const foods = results.hits.map(hit => {
+      let source_id;
+      if (hit.source === 'usda_foundation' || hit.source === 'usda_sr_legacy') {
+        source_id = String(hit.id);
+      } else {
+        // openfoodfacts — use barcode
+        source_id = hit.barcode || String(hit.id);
+      }
+      return { ...hit, source_id };
     });
 
     const response = {
@@ -111,7 +134,7 @@ async function foodRoutes(fastify) {
       limit,
       total: results.estimatedTotalHits,
       processingTimeMs: results.processingTimeMs,
-      foods: results.hits,
+      foods,
     };
 
     await redis.set(cacheKey, JSON.stringify(response), 'EX', SEARCH_CACHE_TTL);
@@ -156,6 +179,7 @@ async function foodRoutes(fastify) {
         return {
           id: cf.id,
           barcode: cf.barcode,
+          source_id: cf.id,
           product_name: cf.product_name,
           brands: cf.brands,
           serving_size: cf.serving_size,
@@ -191,6 +215,7 @@ async function foodRoutes(fastify) {
       return {
         id: cf.id,
         barcode: cf.barcode,
+        source_id: cf.id,
         product_name: cf.product_name,
         brands: cf.brands,
         serving_size: cf.serving_size,
@@ -250,6 +275,16 @@ async function foodRoutes(fastify) {
     if (!food) {
       await redis.set(cacheKey, 'NOT_FOUND', 'EX', BARCODE_CACHE_TTL);
       return reply.code(404).send({ error: 'Product not found' });
+    }
+
+    // Ensure barcode and source_id are in the response
+    if (!food.barcode) food.barcode = normalizedCode;
+    if (!food.source_id) {
+      if (food.source === 'usda_foundation' || food.source === 'usda_sr_legacy') {
+        food.source_id = String(food.id);
+      } else {
+        food.source_id = food.barcode || String(food.id);
+      }
     }
 
     await redis.set(cacheKey, JSON.stringify(food), 'EX', BARCODE_CACHE_TTL);

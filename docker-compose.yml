@@ -60,6 +60,8 @@ services:
   api:
     build: ./api
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: postgres://fushi:${POSTGRES_PASSWORD}@postgres:5432/macromicro
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
@@ -67,6 +69,7 @@ services:
       MEILI_KEY: ${MEILI_MASTER_KEY}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
       NODE_ENV: production
+      ML_SERVER_URL: http://host.docker.internal:8001
     volumes:
       - ./static:/app/static:ro
       - ./static/uploads:/app/static/uploads:rw

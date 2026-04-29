@@ -133,6 +133,9 @@ async function customFoodRoutes(fastify) {
           vitamin_c: { type: 'number' },
           image_url: { type: 'string', maxLength: 1000 },
           is_public: { type: 'boolean' },
+          food_category: { type: 'string', maxLength: 20 },
+          serving_count: { type: 'integer' },
+          serving_unit: { type: 'string', maxLength: 20 },
         },
       },
     },
@@ -143,8 +146,8 @@ async function customFoodRoutes(fastify) {
         user_id, barcode, product_name, brands, serving_size,
         calories, protein, fat, carbs, fiber, sugar, saturated_fat,
         sodium, cholesterol, potassium, calcium, iron, vitamin_a, vitamin_c,
-        image_url, is_public
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+        image_url, is_public, food_category, serving_count, serving_unit
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
       RETURNING *`,
       [
         request.userId, f.barcode || null, f.product_name, f.brands || '',
@@ -152,7 +155,8 @@ async function customFoodRoutes(fastify) {
         f.carbs || 0, f.fiber || 0, f.sugar || 0, f.saturated_fat || 0,
         f.sodium || 0, f.cholesterol || 0, f.potassium || 0, f.calcium || 0,
         f.iron || 0, f.vitamin_a || 0, f.vitamin_c || 0, f.image_url || '',
-        f.is_public || false,
+        f.is_public || false, f.food_category || 'food', f.serving_count || 1,
+        f.serving_unit || 'g',
       ]
     );
     reply.code(201);
@@ -186,6 +190,9 @@ async function customFoodRoutes(fastify) {
           vitamin_c: { type: 'number' },
           image_url: { type: 'string', maxLength: 1000 },
           is_public: { type: 'boolean' },
+          food_category: { type: 'string', maxLength: 20 },
+          serving_count: { type: 'integer' },
+          serving_unit: { type: 'string', maxLength: 20 },
         },
       },
     },

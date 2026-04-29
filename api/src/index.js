@@ -20,6 +20,14 @@ const planRoutes = require('./routes/plans');
 const weightRoutes = require('./routes/weight');
 const bugReportRoutes = require('./routes/bugReports');
 const exerciseRoutes = require('./routes/exercises');
+const parseFoodTextRoutes = require('./routes/parseFoodText');
+const collectionRoutes = require('./routes/collections');
+const waterRoutes = require('./routes/water');
+const mlRoutes = require('./routes/ml');
+const healthConnectRoutes = require('./routes/healthConnect');
+const measurementRoutes = require('./routes/measurements');
+const exportRoutes = require('./routes/export');
+const recipeRoutes = require('./routes/recipes');
 
 const fastify = Fastify({ logger: true });
 
@@ -65,6 +73,15 @@ const start = async () => {
   await fastify.register(exerciseRoutes);
   await fastify.register(customFoodRoutes);  // /custom-foods, /public-foods
   await fastify.register(customExerciseRoutes); // /custom-exercises, /public-exercises
+  await fastify.register(parseFoodTextRoutes);  // /parse-food-text
+  await fastify.register(collectionRoutes);    // /collections, /favorites
+  await fastify.register(waterRoutes);         // /water
+  await fastify.register(mlRoutes);            // /ml/predict, /ml/health
+  await fastify.register(healthConnectRoutes); // /sync/health-connect, /sync/health-connect/status
+  await fastify.register(measurementRoutes);   // /measurements
+  await fastify.register(exportRoutes);        // /export
+  await fastify.register(recipeRoutes);        // /recipes
+
   // Global error handler
   fastify.setErrorHandler((error, request, reply) => {
     fastify.log.error(error);

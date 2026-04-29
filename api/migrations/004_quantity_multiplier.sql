@@ -1,0 +1,2 @@
+ALTER TABLE daily_foods
+  ADD COLUMN IF NOT EXISTS quantity_multiplier DECIMAL(4,2) NOT NULL DEFAULT 1.0;

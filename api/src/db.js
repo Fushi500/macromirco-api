@@ -1,4 +1,11 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// Parse NUMERIC/DECIMAL (OID 1700) as float instead of string
+// so JSON responses contain actual numbers, not strings like "95.00".
+types.setTypeParser(1700, (val) => parseFloat(val));
+
+// Parse BIGINT (OID 20) as int instead of string.
+types.setTypeParser(20, (val) => parseInt(val, 10));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,

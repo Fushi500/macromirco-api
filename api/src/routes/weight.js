@@ -69,6 +69,19 @@ async function weightRoutes(fastify) {
     );
     return result.rows;
   });
+  // DELETE /weight/:date
+  fastify.delete('/weight/:date', {
+    preHandler: [fastify.requireAuth],
+  }, async (request, reply) => {
+    const result = await query(
+      'DELETE FROM weight_logs WHERE user_id = $1 AND date = $2 RETURNING id',
+      [request.userId, request.params.date]
+    );
+    if (result.rows.length === 0) {
+      return reply.code(404).send({ error: 'Not found' });
+    }
+    return { deleted: true };
+  });
 }
 
 module.exports = weightRoutes;

@@ -33,6 +33,7 @@ async function planRoutes(fastify) {
         properties: {
           name: { type: 'string', minLength: 1, maxLength: 200 },
           description: { type: 'string', maxLength: 2000 },
+          scheduled_days: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 7 } },
           exercises: {
             type: 'array',
             items: {
@@ -55,15 +56,15 @@ async function planRoutes(fastify) {
       },
     },
   }, async (request, reply) => {
-    const { name, description, exercises } = request.body;
+    const { name, description, scheduled_days, exercises } = request.body;
     const client = await getClient();
 
     try {
       await client.query('BEGIN');
 
       const planResult = await client.query(
-        'INSERT INTO workout_plans (user_id, name, description) VALUES ($1, $2, $3) RETURNING *',
-        [request.userId, name, description || '']
+        'INSERT INTO workout_plans (user_id, name, description, scheduled_days) VALUES ($1, $2, $3, $4) RETURNING *',
+        [request.userId, name, description || '', scheduled_days || []]
       );
       const plan = planResult.rows[0];
 
@@ -114,12 +115,13 @@ async function planRoutes(fastify) {
         properties: {
           name: { type: 'string', minLength: 1, maxLength: 200 },
           description: { type: 'string', maxLength: 2000 },
+          scheduled_days: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 7 } },
           exercises: { type: 'array' },
         },
       },
     },
   }, async (request, reply) => {
-    const { name, description, exercises } = request.body;
+    const { name, description, scheduled_days, exercises } = request.body;
     const client = await getClient();
 
     try {
@@ -136,12 +138,13 @@ async function planRoutes(fastify) {
       }
 
       // Update plan fields
-      if (name || description !== undefined) {
+      if (name || description !== undefined || scheduled_days !== undefined) {
         const setClauses = [];
         const vals = [];
         let p = 1;
         if (name) { setClauses.push(`name = $${p++}`); vals.push(name); }
         if (description !== undefined) { setClauses.push(`description = $${p++}`); vals.push(description); }
+        if (scheduled_days !== undefined) { setClauses.push(`scheduled_days = $${p++}`); vals.push(scheduled_days); }
         vals.push(request.params.id);
         await client.query(
           `UPDATE workout_plans SET ${setClauses.join(', ')} WHERE id = $${p}`,
