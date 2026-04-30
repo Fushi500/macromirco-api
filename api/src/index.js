@@ -28,6 +28,7 @@ const healthConnectRoutes = require('./routes/healthConnect');
 const measurementRoutes = require('./routes/measurements');
 const exportRoutes = require('./routes/export');
 const recipeRoutes = require('./routes/recipes');
+const fastRoutes = require('./routes/fasts');
 
 const fastify = Fastify({ logger: true });
 
@@ -81,6 +82,7 @@ const start = async () => {
   await fastify.register(measurementRoutes);   // /measurements
   await fastify.register(exportRoutes);        // /export
   await fastify.register(recipeRoutes);        // /recipes
+  await fastify.register(fastRoutes);          // /fasts
 
   // Global error handler
   fastify.setErrorHandler((error, request, reply) => {

@@ -276,7 +276,76 @@ async function foodsRoutes(fastify) {
     return { copied: result.rowCount };
   });
 
-  // GET /foods/history?days=30
+  // GET /foods/frequents?limit=20
+  fastify.get('/foods/frequents', {
+    preHandler: [fastify.requireAuth],
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+        },
+      },
+    },
+  }, async (request) => {
+    const { limit } = request.query;
+    const result = await query(
+      `SELECT
+        food_name AS product_name,
+        '' AS brands,
+        serving_size,
+        calories,
+        carbs,
+        fats AS fat,
+        protein,
+        fiber,
+        sugar,
+        saturated_fat,
+        sodium,
+        cholesterol,
+        potassium,
+        calcium,
+        iron,
+        vitamin_a,
+        vitamin_c,
+        COUNT(*) AS frequency
+      FROM daily_foods
+      WHERE user_id = $1
+        AND date >= CURRENT_DATE - 60
+      GROUP BY food_name, serving_size, calories, carbs, fats, protein,
+               fiber, sugar, saturated_fat, sodium, cholesterol, potassium,
+               calcium, iron, vitamin_a, vitamin_c
+      ORDER BY frequency DESC
+      LIMIT $2`,
+      [request.userId, limit]
+    );
+    return result.rows.map(r => ({
+      product_name: r.product_name,
+      brands: r.brands,
+      serving_size: r.serving_size,
+      nutriments: {
+        'energy-kcal': r.calories,
+        carbohydrates: r.carbs,
+        fat: r.fat,
+        proteins: r.protein,
+        fiber: r.fiber,
+        sugars: r.sugar,
+        'saturated-fat': r.saturated_fat,
+        sodium: r.sodium,
+        cholesterol: r.cholesterol,
+        potassium: r.potassium,
+        calcium: r.calcium,
+        iron: r.iron,
+        'vitamin-a': r.vitamin_a,
+        'vitamin-c': r.vitamin_c,
+      },
+      source: 'history',
+      source_id: null,
+      frequency: parseInt(r.frequency),
+    }));
+  });
+
+  // GET /foods/history?days=30  (aggregated daily totals — existing)
   fastify.get('/foods/history', {
     preHandler: [fastify.requireAuth],
     schema: {
@@ -284,11 +353,25 @@ async function foodsRoutes(fastify) {
         type: 'object',
         properties: {
           days: { type: 'integer', minimum: 1, maximum: 365, default: 30 },
+          from: { type: 'string', format: 'date' },
+          to:   { type: 'string', format: 'date' },
         },
       },
     },
   }, async (request) => {
-    const { days } = request.query;
+    const { days, from, to } = request.query;
+
+    // Per-entry bulk fetch for export when from+to are provided
+    if (from && to) {
+      const result = await query(
+        `SELECT * FROM daily_foods
+         WHERE user_id = $1 AND date >= $2 AND date <= $3
+         ORDER BY date DESC, created_at DESC`,
+        [request.userId, from, to]
+      );
+      return result.rows;
+    }
+
     const result = await query(
       `SELECT date,
               SUM(calories) as calories,
@@ -339,6 +422,33 @@ async function foodsRoutes(fastify) {
       const d = new Date(r.date);
       return { date: r.date, dayIndex: (d.getDay() + 6) % 7 };
     });
+  });
+
+  // GET /foods/streak-stats
+  fastify.get('/foods/streak-stats', {
+    preHandler: [fastify.requireAuth],
+  }, async (request) => {
+    const result = await query(
+      `WITH dates AS (
+        SELECT DISTINCT date::date AS d FROM daily_foods WHERE user_id = $1 ORDER BY d DESC
+      ),
+      streaks AS (
+        SELECT d, d - (ROW_NUMBER() OVER (ORDER BY d))::integer AS grp FROM dates
+      ),
+      grouped AS (
+        SELECT grp, COUNT(*) AS len, MIN(d) AS start_date, MAX(d) AS end_date
+        FROM streaks GROUP BY grp ORDER BY end_date DESC
+      )
+      SELECT
+        (SELECT len FROM grouped LIMIT 1) AS current_streak,
+        (SELECT MAX(len) FROM grouped) AS longest_streak`,
+      [request.userId]
+    );
+    const row = result.rows[0] || {};
+    return {
+      current_streak: parseInt(row.current_streak) || 0,
+      longest_streak: parseInt(row.longest_streak) || 0,
+    };
   });
   // GET /foods/week-activity — per-day activity data for streak display
   fastify.get('/foods/week-activity', {

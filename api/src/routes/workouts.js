@@ -42,6 +42,17 @@ async function workoutRoutes(fastify) {
           intensity_level: { type: 'integer', minimum: 1, maximum: 10, nullable: true },
           weight_kg: { type: 'number', minimum: 0, nullable: true },
           client_session_id: { type: 'string', maxLength: 100 },
+          zone_breakdown_sec: {
+            type: 'object',
+            nullable: true,
+            properties: {
+              z1: { type: 'integer', minimum: 0 },
+              z2: { type: 'integer', minimum: 0 },
+              z3: { type: 'integer', minimum: 0 },
+              z4: { type: 'integer', minimum: 0 },
+              z5: { type: 'integer', minimum: 0 },
+            },
+          },
         },
       },
     },
@@ -54,6 +65,7 @@ async function workoutRoutes(fastify) {
       w.duration_minutes || 0, w.notes || '',
       w.estimated_calories ?? null, w.intensity_level ?? null,
       w.weight_kg ?? null, w.client_session_id || null,
+      w.zone_breakdown_sec ? JSON.stringify(w.zone_breakdown_sec) : null,
     ];
 
     if (w.client_session_id) {
@@ -61,8 +73,9 @@ async function workoutRoutes(fastify) {
         `INSERT INTO workout_logs (
           user_id, date, exercise_slug, exercise_name, category,
           primary_muscles, sets, reps, duration_minutes, notes,
-          estimated_calories, intensity_level, weight_kg, client_session_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          estimated_calories, intensity_level, weight_kg, client_session_id,
+          zone_breakdown_sec
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         ON CONFLICT (user_id, client_session_id) DO NOTHING
         RETURNING *`,
         insertValues
@@ -83,8 +96,9 @@ async function workoutRoutes(fastify) {
       `INSERT INTO workout_logs (
         user_id, date, exercise_slug, exercise_name, category,
         primary_muscles, sets, reps, duration_minutes, notes,
-        estimated_calories, intensity_level, weight_kg, client_session_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        estimated_calories, intensity_level, weight_kg, client_session_id,
+        zone_breakdown_sec
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       RETURNING *`,
       insertValues
     );
@@ -122,6 +136,17 @@ async function workoutRoutes(fastify) {
                 intensity_level: { type: 'integer', minimum: 1, maximum: 10, nullable: true },
                 weight_kg: { type: 'number', minimum: 0, nullable: true },
                 client_session_id: { type: 'string', maxLength: 100 },
+                zone_breakdown_sec: {
+                  type: 'object',
+                  nullable: true,
+                  properties: {
+                    z1: { type: 'integer', minimum: 0 },
+                    z2: { type: 'integer', minimum: 0 },
+                    z3: { type: 'integer', minimum: 0 },
+                    z4: { type: 'integer', minimum: 0 },
+                    z5: { type: 'integer', minimum: 0 },
+                  },
+                },
               },
             },
           },
@@ -141,8 +166,9 @@ async function workoutRoutes(fastify) {
           `INSERT INTO workout_logs (
             user_id, date, exercise_slug, exercise_name, category,
             primary_muscles, sets, reps, duration_minutes, notes,
-            estimated_calories, intensity_level, weight_kg, client_session_id
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            estimated_calories, intensity_level, weight_kg, client_session_id,
+            zone_breakdown_sec
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
           ON CONFLICT (user_id, client_session_id) DO NOTHING
           RETURNING *`,
           [
@@ -151,6 +177,7 @@ async function workoutRoutes(fastify) {
             w.duration_minutes || 0, w.notes || '',
             w.estimated_calories ?? null, w.intensity_level ?? null,
             w.weight_kg ?? null, w.client_session_id || null,
+            w.zone_breakdown_sec ? JSON.stringify(w.zone_breakdown_sec) : null,
           ]
         );
         created.push(result.rows[0] || null);
@@ -207,22 +234,114 @@ async function workoutRoutes(fastify) {
     return result.rows;
   });
 
-  // GET /workouts/prs
+  // GET /workouts/prs?window=all|90d|30d
   fastify.get('/workouts/prs', {
     preHandler: [fastify.requireAuth],
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          window: { type: 'string', enum: ['all', '90d', '30d'], default: 'all' },
+        },
+      },
+    },
   }, async (request) => {
+    const { window } = request.query;
+    let dateFilter = '';
+    if (window === '90d') {
+      dateFilter = `AND date >= CURRENT_DATE - 90`;
+    } else if (window === '30d') {
+      dateFilter = `AND date >= CURRENT_DATE - 30`;
+    }
+
     const result = await query(
-      `SELECT DISTINCT ON (exercise_slug)
-         exercise_slug,
-         exercise_name,
-         weight_kg AS best_weight,
-         reps AS best_reps,
-         date::text AS achieved_at
-       FROM workout_logs
-       WHERE user_id = $1
-         AND exercise_slug IS NOT NULL
-         AND (weight_kg IS NOT NULL OR reps IS NOT NULL)
-       ORDER BY exercise_slug, weight_kg DESC NULLS LAST, reps DESC NULLS LAST`,
+      `WITH ranked AS (
+        SELECT
+          exercise_slug,
+          exercise_name,
+          weight_kg,
+          reps,
+          date::text AS achieved_at,
+          -- Epley 1RM estimate
+          CASE WHEN weight_kg IS NOT NULL AND reps IS NOT NULL AND reps > 0
+               THEN weight_kg * (1 + reps::numeric / 30)
+               ELSE NULL
+          END AS estimated_1rm,
+          -- 3RM: weight where reps = 3
+          CASE WHEN reps = 3 THEN weight_kg ELSE NULL END AS rm3,
+          -- 5RM: weight where reps = 5
+          CASE WHEN reps = 5 THEN weight_kg ELSE NULL END AS rm5,
+          -- Volume for this entry
+          CASE WHEN weight_kg IS NOT NULL AND reps IS NOT NULL AND sets IS NOT NULL
+               THEN sets * reps * weight_kg
+               ELSE NULL
+          END AS entry_volume
+        FROM workout_logs
+        WHERE user_id = $1
+          AND exercise_slug IS NOT NULL
+          AND (weight_kg IS NOT NULL OR reps IS NOT NULL)
+          ${dateFilter}
+      ),
+      best_1rm AS (
+        SELECT DISTINCT ON (exercise_slug)
+          exercise_slug,
+          estimated_1rm AS best_1rm,
+          achieved_at AS best_1rm_at
+        FROM ranked
+        WHERE estimated_1rm IS NOT NULL
+        ORDER BY exercise_slug, estimated_1rm DESC
+      ),
+      best_3rm AS (
+        SELECT DISTINCT ON (exercise_slug)
+          exercise_slug,
+          rm3 AS best_3rm
+        FROM ranked
+        WHERE rm3 IS NOT NULL
+        ORDER BY exercise_slug, rm3 DESC
+      ),
+      best_5rm AS (
+        SELECT DISTINCT ON (exercise_slug)
+          exercise_slug,
+          rm5 AS best_5rm
+        FROM ranked
+        WHERE rm5 IS NOT NULL
+        ORDER BY exercise_slug, rm5 DESC
+      ),
+      best_volume AS (
+        SELECT DISTINCT ON (exercise_slug)
+          exercise_slug,
+          entry_volume AS best_volume
+        FROM ranked
+        WHERE entry_volume IS NOT NULL
+        ORDER BY exercise_slug, entry_volume DESC
+      ),
+      best_weight_reps AS (
+        SELECT DISTINCT ON (exercise_slug)
+          exercise_slug,
+          weight_kg AS best_weight,
+          reps AS best_reps,
+          achieved_at
+        FROM ranked
+        WHERE weight_kg IS NOT NULL
+        ORDER BY exercise_slug, weight_kg DESC NULLS LAST, reps DESC NULLS LAST
+      )
+      SELECT
+        w.exercise_slug,
+        w.exercise_name,
+        bwr.best_weight,
+        bwr.best_reps,
+        b1.best_1rm,
+        b3.best_3rm,
+        b5.best_5rm,
+        bv.best_volume,
+        b1.best_1rm_at AS achieved_at
+      FROM (SELECT DISTINCT exercise_slug, exercise_name FROM ranked) w
+      LEFT JOIN best_weight_reps bwr ON w.exercise_slug = bwr.exercise_slug
+      LEFT JOIN best_1rm b1 ON w.exercise_slug = b1.exercise_slug
+      LEFT JOIN best_3rm b3 ON w.exercise_slug = b3.exercise_slug
+      LEFT JOIN best_5rm b5 ON w.exercise_slug = b5.exercise_slug
+      LEFT JOIN best_volume bv ON w.exercise_slug = bv.exercise_slug
+      ORDER BY w.exercise_slug`,
       [request.userId]
     );
     return result.rows;
@@ -274,6 +393,33 @@ async function workoutRoutes(fastify) {
       const d = new Date(r.date);
       return { date: r.date, dayIndex: (d.getDay() + 6) % 7 };
     });
+  });
+
+  // GET /workouts/streak-stats
+  fastify.get('/workouts/streak-stats', {
+    preHandler: [fastify.requireAuth],
+  }, async (request) => {
+    const result = await query(
+      `WITH dates AS (
+        SELECT DISTINCT date::date AS d FROM workout_logs WHERE user_id = $1 ORDER BY d DESC
+      ),
+      streaks AS (
+        SELECT d, d - (ROW_NUMBER() OVER (ORDER BY d))::integer AS grp FROM dates
+      ),
+      grouped AS (
+        SELECT grp, COUNT(*) AS len, MIN(d) AS start_date, MAX(d) AS end_date
+        FROM streaks GROUP BY grp ORDER BY end_date DESC
+      )
+      SELECT
+        (SELECT len FROM grouped LIMIT 1) AS current_streak,
+        (SELECT MAX(len) FROM grouped) AS longest_streak`,
+      [request.userId]
+    );
+    const row = result.rows[0] || {};
+    return {
+      current_streak: parseInt(row.current_streak) || 0,
+      longest_streak: parseInt(row.longest_streak) || 0,
+    };
   });
   // GET /workouts/week — all workouts from Monday of current week through today
   fastify.get('/workouts/week', {
