@@ -7,6 +7,33 @@ const { query, getClient } = require('../db');
 const UPLOAD_DIR = '/app/static/uploads/recipes';
 const UPLOAD_URL_PREFIX = 'https://api.macromirco.com/images/uploads/recipes';
 
+// Helper: compute full totals from ingredients array
+function computeRecipeTotals(ingredients) {
+  const totals = {
+    calories: 0, protein: 0, carbs: 0, fat: 0,
+    fiber: 0, sugar: 0, saturated_fat: 0, sodium: 0,
+    cholesterol: 0, potassium: 0, calcium: 0, iron: 0,
+    vitamin_a: 0, vitamin_c: 0,
+  };
+  for (const ing of ingredients) {
+    totals.calories += ing.calories || 0;
+    totals.protein += ing.protein || 0;
+    totals.carbs += ing.carbs || 0;
+    totals.fat += ing.fat || 0;
+    totals.fiber += ing.fiber || 0;
+    totals.sugar += ing.sugar || 0;
+    totals.saturated_fat += ing.saturated_fat || 0;
+    totals.sodium += ing.sodium || 0;
+    totals.cholesterol += ing.cholesterol || 0;
+    totals.potassium += ing.potassium || 0;
+    totals.calcium += ing.calcium || 0;
+    totals.iron += ing.iron || 0;
+    totals.vitamin_a += ing.vitamin_a || 0;
+    totals.vitamin_c += ing.vitamin_c || 0;
+  }
+  return totals;
+}
+
 async function recipeRoutes(fastify) {
 
   // GET /recipes — list user's recipes (supports ?q= & ?limit=)
@@ -74,7 +101,9 @@ async function recipeRoutes(fastify) {
 
     const ingredientsResult = await query(
       `SELECT id, food_source, food_source_id, food_name, quantity_g,
-              calories, protein, carbs, fat, created_at
+              calories, protein, carbs, fat, fiber, sugar,
+              saturated_fat, sodium, cholesterol, potassium,
+              calcium, iron, vitamin_a, vitamin_c, created_at
        FROM recipe_ingredients
        WHERE recipe_id = $1
        ORDER BY created_at`,
@@ -101,6 +130,7 @@ async function recipeRoutes(fastify) {
           prep_time_minutes: { type: 'integer', minimum: 0 },
           cook_time_minutes: { type: 'integer', minimum: 0 },
           servings: { type: 'integer', minimum: 1 },
+          cooking_adjustment_pct: { type: 'number', default: 100 },
           ingredients: {
             type: 'array',
             minItems: 1,
@@ -116,6 +146,16 @@ async function recipeRoutes(fastify) {
                 protein: { type: 'number' },
                 carbs: { type: 'number' },
                 fat: { type: 'number' },
+                fiber: { type: 'number' },
+                sugar: { type: 'number' },
+                saturated_fat: { type: 'number' },
+                sodium: { type: 'number' },
+                cholesterol: { type: 'number' },
+                potassium: { type: 'number' },
+                calcium: { type: 'number' },
+                iron: { type: 'number' },
+                vitamin_a: { type: 'number' },
+                vitamin_c: { type: 'number' },
               },
             },
           },
@@ -126,15 +166,11 @@ async function recipeRoutes(fastify) {
     const b = request.body;
     const ingredients = b.ingredients || [];
 
-    // Calculate totals from ingredients
     const totalGrams = ingredients.reduce((sum, ing) => sum + (ing.quantity_g || 0), 0);
     const servingQuantity = totalGrams;
     const servingSize = `1 serving (${totalGrams}g)`;
-
-    const totalCalories = ingredients.reduce((sum, ing) => sum + (ing.calories || 0), 0);
-    const totalProtein = ingredients.reduce((sum, ing) => sum + (ing.protein || 0), 0);
-    const totalCarbs = ingredients.reduce((sum, ing) => sum + (ing.carbs || 0), 0);
-    const totalFat = ingredients.reduce((sum, ing) => sum + (ing.fat || 0), 0);
+    const totals = computeRecipeTotals(ingredients);
+    const adj = (b.cooking_adjustment_pct || 100) / 100.0;
 
     const client = await getClient();
     try {
@@ -144,14 +180,21 @@ async function recipeRoutes(fastify) {
         `INSERT INTO recipes (
           user_id, name, description, steps, prep_time_minutes,
           cook_time_minutes, servings, serving_quantity, serving_size,
-          calories, protein, carbs, fat
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          calories, protein, carbs, fat, fiber, sugar,
+          saturated_fat, sodium, cholesterol, potassium,
+          calcium, iron, vitamin_a, vitamin_c,
+          cooking_adjustment_pct
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
         RETURNING *`,
         [
           request.userId, b.name, b.description || '', b.steps || '',
           b.prep_time_minutes || 0, b.cook_time_minutes || 0, b.servings || 1,
           servingQuantity, servingSize,
-          totalCalories, totalProtein, totalCarbs, totalFat,
+          totals.calories * adj, totals.protein * adj, totals.carbs * adj, totals.fat * adj,
+          totals.fiber * adj, totals.sugar * adj, totals.saturated_fat * adj,
+          totals.sodium * adj, totals.cholesterol * adj, totals.potassium * adj,
+          totals.calcium * adj, totals.iron * adj, totals.vitamin_a * adj, totals.vitamin_c * adj,
+          b.cooking_adjustment_pct || 100,
         ]
       );
       const recipe = recipeResult.rows[0];
@@ -160,12 +203,17 @@ async function recipeRoutes(fastify) {
         await client.query(
           `INSERT INTO recipe_ingredients (
             recipe_id, food_source, food_source_id, food_name,
-            quantity_g, calories, protein, carbs, fat
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            quantity_g, calories, protein, carbs, fat, fiber, sugar,
+            saturated_fat, sodium, cholesterol, potassium,
+            calcium, iron, vitamin_a, vitamin_c
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
           [
             recipe.id, ing.food_source, ing.food_source_id, ing.food_name,
             ing.quantity_g, ing.calories || 0, ing.protein || 0,
-            ing.carbs || 0, ing.fat || 0,
+            ing.carbs || 0, ing.fat || 0, ing.fiber || 0, ing.sugar || 0,
+            ing.saturated_fat || 0, ing.sodium || 0, ing.cholesterol || 0,
+            ing.potassium || 0, ing.calcium || 0, ing.iron || 0,
+            ing.vitamin_a || 0, ing.vitamin_c || 0,
           ]
         );
       }
@@ -174,7 +222,9 @@ async function recipeRoutes(fastify) {
 
       const ingredientsRes = await query(
         `SELECT id, food_source, food_source_id, food_name, quantity_g,
-                calories, protein, carbs, fat, created_at
+                calories, protein, carbs, fat, fiber, sugar,
+                saturated_fat, sodium, cholesterol, potassium,
+                calcium, iron, vitamin_a, vitamin_c, created_at
          FROM recipe_ingredients WHERE recipe_id = $1 ORDER BY created_at`,
         [recipe.id]
       );
@@ -205,6 +255,7 @@ async function recipeRoutes(fastify) {
           prep_time_minutes: { type: 'integer', minimum: 0 },
           cook_time_minutes: { type: 'integer', minimum: 0 },
           servings: { type: 'integer', minimum: 1 },
+          cooking_adjustment_pct: { type: 'number', default: 100 },
           ingredients: {
             type: 'array',
             minItems: 1,
@@ -220,6 +271,16 @@ async function recipeRoutes(fastify) {
                 protein: { type: 'number' },
                 carbs: { type: 'number' },
                 fat: { type: 'number' },
+                fiber: { type: 'number' },
+                sugar: { type: 'number' },
+                saturated_fat: { type: 'number' },
+                sodium: { type: 'number' },
+                cholesterol: { type: 'number' },
+                potassium: { type: 'number' },
+                calcium: { type: 'number' },
+                iron: { type: 'number' },
+                vitamin_a: { type: 'number' },
+                vitamin_c: { type: 'number' },
               },
             },
           },
@@ -239,15 +300,11 @@ async function recipeRoutes(fastify) {
       return reply.code(404).send({ error: 'Recipe not found' });
     }
 
-    // Calculate totals from ingredients
     const totalGrams = ingredients.reduce((sum, ing) => sum + (ing.quantity_g || 0), 0);
     const servingQuantity = totalGrams;
     const servingSize = `1 serving (${totalGrams}g)`;
-
-    const totalCalories = ingredients.reduce((sum, ing) => sum + (ing.calories || 0), 0);
-    const totalProtein = ingredients.reduce((sum, ing) => sum + (ing.protein || 0), 0);
-    const totalCarbs = ingredients.reduce((sum, ing) => sum + (ing.carbs || 0), 0);
-    const totalFat = ingredients.reduce((sum, ing) => sum + (ing.fat || 0), 0);
+    const totals = computeRecipeTotals(ingredients);
+    const adj = (b.cooking_adjustment_pct || 100) / 100.0;
 
     const client = await getClient();
     try {
@@ -259,14 +316,22 @@ async function recipeRoutes(fastify) {
           prep_time_minutes = $4, cook_time_minutes = $5, servings = $6,
           serving_quantity = $7, serving_size = $8,
           calories = $9, protein = $10, carbs = $11, fat = $12,
+          fiber = $13, sugar = $14, saturated_fat = $15, sodium = $16,
+          cholesterol = $17, potassium = $18, calcium = $19, iron = $20,
+          vitamin_a = $21, vitamin_c = $22,
+          cooking_adjustment_pct = $23,
           updated_at = now()
-         WHERE id = $13 AND user_id = $14
+         WHERE id = $24 AND user_id = $25
          RETURNING *`,
         [
           b.name, b.description || '', b.steps || '',
           b.prep_time_minutes || 0, b.cook_time_minutes || 0, b.servings || 1,
           servingQuantity, servingSize,
-          totalCalories, totalProtein, totalCarbs, totalFat,
+          totals.calories * adj, totals.protein * adj, totals.carbs * adj, totals.fat * adj,
+          totals.fiber * adj, totals.sugar * adj, totals.saturated_fat * adj,
+          totals.sodium * adj, totals.cholesterol * adj, totals.potassium * adj,
+          totals.calcium * adj, totals.iron * adj, totals.vitamin_a * adj, totals.vitamin_c * adj,
+          b.cooking_adjustment_pct || 100,
           request.params.id, request.userId,
         ]
       );
@@ -279,12 +344,17 @@ async function recipeRoutes(fastify) {
         await client.query(
           `INSERT INTO recipe_ingredients (
             recipe_id, food_source, food_source_id, food_name,
-            quantity_g, calories, protein, carbs, fat
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            quantity_g, calories, protein, carbs, fat, fiber, sugar,
+            saturated_fat, sodium, cholesterol, potassium,
+            calcium, iron, vitamin_a, vitamin_c
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
           [
             recipe.id, ing.food_source, ing.food_source_id, ing.food_name,
             ing.quantity_g, ing.calories || 0, ing.protein || 0,
-            ing.carbs || 0, ing.fat || 0,
+            ing.carbs || 0, ing.fat || 0, ing.fiber || 0, ing.sugar || 0,
+            ing.saturated_fat || 0, ing.sodium || 0, ing.cholesterol || 0,
+            ing.potassium || 0, ing.calcium || 0, ing.iron || 0,
+            ing.vitamin_a || 0, ing.vitamin_c || 0,
           ]
         );
       }
@@ -293,7 +363,9 @@ async function recipeRoutes(fastify) {
 
       const ingredientsRes = await query(
         `SELECT id, food_source, food_source_id, food_name, quantity_g,
-                calories, protein, carbs, fat, created_at
+                calories, protein, carbs, fat, fiber, sugar,
+                saturated_fat, sodium, cholesterol, potassium,
+                calcium, iron, vitamin_a, vitamin_c, created_at
          FROM recipe_ingredients WHERE recipe_id = $1 ORDER BY created_at`,
         [recipe.id]
       );
@@ -373,7 +445,9 @@ async function recipeRoutes(fastify) {
     const original = source.rows[0];
     const ingredientsRes = await query(
       `SELECT food_source, food_source_id, food_name, quantity_g,
-              calories, protein, carbs, fat
+              calories, protein, carbs, fat, fiber, sugar,
+              saturated_fat, sodium, cholesterol, potassium,
+              calcium, iron, vitamin_a, vitamin_c
        FROM recipe_ingredients WHERE recipe_id = $1`,
       [request.params.id]
     );
@@ -388,8 +462,9 @@ async function recipeRoutes(fastify) {
           cook_time_minutes, servings, serving_quantity, serving_size,
           calories, protein, carbs, fat, fiber, sugar,
           saturated_fat, sodium, cholesterol, potassium,
-          calcium, iron, vitamin_a, vitamin_c
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+          calcium, iron, vitamin_a, vitamin_c,
+          cooking_adjustment_pct
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
         RETURNING *`,
         [
           request.userId, original.name + ' (forked)', original.description || '', original.steps || '',
@@ -399,6 +474,7 @@ async function recipeRoutes(fastify) {
           original.fiber || 0, original.sugar || 0, original.saturated_fat || 0,
           original.sodium || 0, original.cholesterol || 0, original.potassium || 0,
           original.calcium || 0, original.iron || 0, original.vitamin_a || 0, original.vitamin_c || 0,
+          original.cooking_adjustment_pct || 100,
         ]
       );
       const newRecipe = newRecipeRes.rows[0];
@@ -407,12 +483,17 @@ async function recipeRoutes(fastify) {
         await client.query(
           `INSERT INTO recipe_ingredients (
             recipe_id, food_source, food_source_id, food_name,
-            quantity_g, calories, protein, carbs, fat
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            quantity_g, calories, protein, carbs, fat, fiber, sugar,
+            saturated_fat, sodium, cholesterol, potassium,
+            calcium, iron, vitamin_a, vitamin_c
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
           [
             newRecipe.id, ing.food_source, ing.food_source_id, ing.food_name,
             ing.quantity_g, ing.calories || 0, ing.protein || 0,
-            ing.carbs || 0, ing.fat || 0,
+            ing.carbs || 0, ing.fat || 0, ing.fiber || 0, ing.sugar || 0,
+            ing.saturated_fat || 0, ing.sodium || 0, ing.cholesterol || 0,
+            ing.potassium || 0, ing.calcium || 0, ing.iron || 0,
+            ing.vitamin_a || 0, ing.vitamin_c || 0,
           ]
         );
       }
@@ -421,7 +502,9 @@ async function recipeRoutes(fastify) {
 
       const newIngredientsRes = await query(
         `SELECT id, food_source, food_source_id, food_name, quantity_g,
-                calories, protein, carbs, fat, created_at
+                calories, protein, carbs, fat, fiber, sugar,
+                saturated_fat, sodium, cholesterol, potassium,
+                calcium, iron, vitamin_a, vitamin_c, created_at
          FROM recipe_ingredients WHERE recipe_id = $1 ORDER BY created_at`,
         [newRecipe.id]
       );
@@ -452,6 +535,11 @@ async function recipeRoutes(fastify) {
     const data = await request.file();
     if (!data) {
       return reply.code(400).send({ error: 'No file uploaded' });
+    }
+
+    // Strict image validation
+    if (!data.mimetype || !data.mimetype.startsWith('image/')) {
+      return reply.code(400).send({ error: 'Invalid file type. Only images are allowed.' });
     }
 
     const mimeExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };

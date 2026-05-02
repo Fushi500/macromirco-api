@@ -92,6 +92,12 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   web:
     image: nginx:alpine

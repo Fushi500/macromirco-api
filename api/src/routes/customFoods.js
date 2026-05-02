@@ -245,6 +245,11 @@ async function customFoodRoutes(fastify) {
       return reply.code(400).send({ error: 'No file uploaded' });
     }
 
+    // Strict image validation
+    if (!data.mimetype || !data.mimetype.startsWith('image/')) {
+      return reply.code(400).send({ error: 'Invalid file type. Only images are allowed.' });
+    }
+
     // Derive extension from mimetype or filename
     const mimeExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
     const ext = mimeExt[data.mimetype] || path.extname(data.filename).slice(1) || 'jpg';

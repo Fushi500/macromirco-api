@@ -1,5 +1,91 @@
 const { query, getClient } = require('../db');
 
+// ─── Exercise calorie estimation (moved from Flutter) ────────────────────────
+
+const CATEGORY_MET = {
+  'strength': 3.5,
+  'cardio': 7.0,
+  'stretching': 2.5,
+  'plyometrics': 8.0,
+  'strongman': 6.0,
+  'calisthenics': 4.5,
+  'olympic-weightlifting': 6.0,
+  'crossfit': 8.0,
+};
+
+const QUICK_MET = {
+  'quick_running': 9.8,
+  'quick_walking': 3.5,
+  'quick_cycling': 7.5,
+  'quick_swimming': 8.0,
+  'quick_yoga': 2.5,
+  'quick_hiit': 10.0,
+  'quick_calisthenics': 4.5,
+  'quick_sports': 6.0,
+  'quick_other': 5.0,
+};
+
+const ZONE_MET = {
+  'z1': 3.0,
+  'z2': 5.5,
+  'z3': 8.0,
+  'z4': 10.5,
+  'z5': 13.0,
+};
+
+function isQuickActivity(slug) {
+  return slug?.startsWith('quick_');
+}
+
+function slugMet(slug, category) {
+  if (isQuickActivity(slug) && QUICK_MET[slug]) {
+    return QUICK_MET[slug];
+  }
+  return CATEGORY_MET[category] || 5.0;
+}
+
+function intensityMultiplier(intensity) {
+  const clamped = Math.max(1, Math.min(10, intensity || 5));
+  return 0.6 + (clamped - 1) * (1.0 / 9.0);
+}
+
+function estimateCaloriesBurned({
+  weightKg,
+  category,
+  slug,
+  durationMinutes,
+  sets,
+  reps,
+  intensity = 5,
+  zones,
+}) {
+  if (!weightKg || weightKg <= 0) return null;
+
+  // Zone-weighted path
+  if (zones && Object.keys(zones).length > 0) {
+    let kcal = 0;
+    for (const [zone, seconds] of Object.entries(zones)) {
+      const hours = seconds / 3600;
+      kcal += (ZONE_MET[zone] || 5.0) * weightKg * hours;
+    }
+    return kcal > 0 ? kcal : null;
+  }
+
+  let effectiveDuration = durationMinutes;
+
+  // Fallback: estimate duration from sets
+  if (!effectiveDuration && sets && sets > 0) {
+    effectiveDuration = Math.max(1, Math.min(120, sets * 3)); // 3 min/set, max 2h
+  }
+
+  if (!effectiveDuration || effectiveDuration <= 0) return null;
+
+  const met = slugMet(slug, category) * intensityMultiplier(intensity);
+  return (met * weightKg * effectiveDuration) / 60;
+}
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+
 async function workoutRoutes(fastify) {
 
   // GET /workouts/today?date=2026-02-28
@@ -59,11 +145,31 @@ async function workoutRoutes(fastify) {
   }, async (request, reply) => {
     const w = request.body;
 
+    // Compute calories server-side if not provided
+    let estimatedCalories = w.estimated_calories ?? null;
+    if (estimatedCalories == null) {
+      const profileRes = await query(
+        'SELECT weight FROM user_profiles WHERE user_id = $1',
+        [request.userId]
+      );
+      const userWeight = parseFloat(profileRes.rows[0]?.weight) || 70;
+      estimatedCalories = estimateCaloriesBurned({
+        weightKg: userWeight,
+        category: w.category,
+        slug: w.exercise_slug,
+        durationMinutes: w.duration_minutes,
+        sets: w.sets,
+        reps: w.reps,
+        intensity: w.intensity_level || 5,
+        zones: w.zone_breakdown_sec,
+      });
+    }
+
     const insertValues = [
       request.userId, w.date, w.exercise_slug, w.exercise_name,
       w.category, w.primary_muscles || [], w.sets || 0, w.reps || 0,
       w.duration_minutes || 0, w.notes || '',
-      w.estimated_calories ?? null, w.intensity_level ?? null,
+      estimatedCalories, w.intensity_level ?? null,
       w.weight_kg ?? null, w.client_session_id || null,
       w.zone_breakdown_sec ? JSON.stringify(w.zone_breakdown_sec) : null,
     ];
@@ -81,7 +187,6 @@ async function workoutRoutes(fastify) {
         insertValues
       );
       if (result.rows.length === 0) {
-        // Duplicate — return existing record
         const existing = await query(
           'SELECT * FROM workout_logs WHERE user_id = $1 AND client_session_id = $2',
           [request.userId, w.client_session_id]
@@ -161,7 +266,28 @@ async function workoutRoutes(fastify) {
       await client.query('BEGIN');
       const created = [];
 
+      // Fetch user weight once for batch
+      const profileRes = await client.query(
+        'SELECT weight FROM user_profiles WHERE user_id = $1',
+        [request.userId]
+      );
+      const userWeight = parseFloat(profileRes.rows[0]?.weight) || 70;
+
       for (const w of entries) {
+        let estimatedCalories = w.estimated_calories ?? null;
+        if (estimatedCalories == null) {
+          estimatedCalories = estimateCaloriesBurned({
+            weightKg: userWeight,
+            category: w.category,
+            slug: w.exercise_slug,
+            durationMinutes: w.duration_minutes,
+            sets: w.sets,
+            reps: w.reps,
+            intensity: w.intensity_level || 5,
+            zones: w.zone_breakdown_sec,
+          });
+        }
+
         const result = await client.query(
           `INSERT INTO workout_logs (
             user_id, date, exercise_slug, exercise_name, category,
@@ -175,7 +301,7 @@ async function workoutRoutes(fastify) {
             request.userId, w.date, w.exercise_slug, w.exercise_name,
             w.category, w.primary_muscles || [], w.sets || 0, w.reps || 0,
             w.duration_minutes || 0, w.notes || '',
-            w.estimated_calories ?? null, w.intensity_level ?? null,
+            estimatedCalories, w.intensity_level ?? null,
             w.weight_kg ?? null, w.client_session_id || null,
             w.zone_breakdown_sec ? JSON.stringify(w.zone_breakdown_sec) : null,
           ]
@@ -262,16 +388,12 @@ async function workoutRoutes(fastify) {
           weight_kg,
           reps,
           date::text AS achieved_at,
-          -- Epley 1RM estimate
           CASE WHEN weight_kg IS NOT NULL AND reps IS NOT NULL AND reps > 0
                THEN weight_kg * (1 + reps::numeric / 30)
                ELSE NULL
           END AS estimated_1rm,
-          -- 3RM: weight where reps = 3
           CASE WHEN reps = 3 THEN weight_kg ELSE NULL END AS rm3,
-          -- 5RM: weight where reps = 5
           CASE WHEN reps = 5 THEN weight_kg ELSE NULL END AS rm5,
-          -- Volume for this entry
           CASE WHEN weight_kg IS NOT NULL AND reps IS NOT NULL AND sets IS NOT NULL
                THEN sets * reps * weight_kg
                ELSE NULL

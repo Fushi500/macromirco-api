@@ -1,4 +1,5 @@
 const { query } = require('../db');
+const { sendBugReportAlert } = require('../services/email');
 
 async function bugReportRoutes(fastify) {
 
@@ -21,8 +22,20 @@ async function bugReportRoutes(fastify) {
       'INSERT INTO bug_reports (user_id, title, description) VALUES ($1, $2, $3) RETURNING *',
       [request.userId, title, description || '']
     );
+    const report = result.rows[0];
+
+    // Fire-and-forget email alert to admin
+    sendBugReportAlert({
+      userId: request.userId,
+      title,
+      description,
+      reportId: report.id,
+    }).catch((err) => {
+      fastify.log.error(`Failed to send bug report email: ${err.message}`);
+    });
+
     reply.code(201);
-    return result.rows[0];
+    return report;
   });
 }
 

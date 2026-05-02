@@ -29,6 +29,7 @@ const measurementRoutes = require('./routes/measurements');
 const exportRoutes = require('./routes/export');
 const recipeRoutes = require('./routes/recipes');
 const fastRoutes = require('./routes/fasts');
+const syncRoutes = require('./routes/sync');
 
 const fastify = Fastify({ logger: true });
 
@@ -83,6 +84,7 @@ const start = async () => {
   await fastify.register(exportRoutes);        // /export
   await fastify.register(recipeRoutes);        // /recipes
   await fastify.register(fastRoutes);          // /fasts
+  await fastify.register(syncRoutes);          // /sync/batch
 
   // Global error handler
   fastify.setErrorHandler((error, request, reply) => {

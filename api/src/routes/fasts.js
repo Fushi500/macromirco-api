@@ -51,7 +51,7 @@ async function fastRoutes(fastify) {
     return result.rows[0];
   });
 
-  // PUT /fasts/:id
+  // PUT /fasts/:id — auto-computes goal_met from ended_at when provided
   fastify.put('/fasts/:id', {
     preHandler: [fastify.requireAuth],
     schema: {
@@ -65,7 +65,22 @@ async function fastRoutes(fastify) {
     },
   }, async (request, reply) => {
     const { id } = request.params;
-    const { ended_at, goal_met } = request.body;
+    let { ended_at, goal_met } = request.body;
+
+    // Fetch existing fast to compute goal_met if ended_at is provided
+    if (ended_at !== undefined && goal_met === undefined) {
+      const existingRes = await query(
+        'SELECT started_at, planned_duration_hours FROM fasts WHERE id = $1 AND user_id = $2',
+        [id, request.userId]
+      );
+      if (existingRes.rows.length > 0) {
+        const fast = existingRes.rows[0];
+        const started = new Date(fast.started_at);
+        const ended = new Date(ended_at);
+        const elapsedMinutes = (ended - started) / (1000 * 60);
+        goal_met = elapsedMinutes >= parseInt(fast.planned_duration_hours) * 60;
+      }
+    }
 
     const updates = [];
     const values = [];
